@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quick Scanner</title>
+
+    <script src="assets/script/html5-qrcode.min.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/html5-qrcode/minified/html5-qrcode.min.js"></script> -->
+    <script src="assets/script/quagga.min.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script> -->
+
+    <link rel="stylesheet" href="assets/style/style.css" />
+  </head>
+  <body>
+    <div id="container">
+      <div id="titleSection">
+        <img src="assets/image/logo/app_logo.ico" />
+        <h1>Quick Scanner</h1>
+      </div>
+      <p class="description">
+        Select scan type, camera, and click "Start Scanning".
+      </p>
+
+      <div id="column">
+        <div class="control-panel">
+          <div class="form-group">
+            <label for="input-string">String to Match:</label>
+            <input type="text" id="input-string" placeholder="Enter string" />
+          </div>
+
+          <div class="form-group">
+            <label for="scan-type">Scan Type:</label>
+            <select id="scan-type">
+              <option value="qrcode">QR Code</option>
+              <option value="barcode">Barcode</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="camera-select">Camera:</label>
+            <select id="camera-select"></select>
+          </div>
+
+          <div class="buttons">
+            <button id="start-scan">Start Scanning</button>
+            <button id="stop-scan">Stop Scanning</button>
+          </div>
+        </div>
+
+        <div id="reader_head">
+          <p id="status-icon" class="status-icon"></p>
+          <div id="reader" class="scanner-box" style="display: none;"></div>
+          <div
+            id="barcode-scanner"
+            class="scanner-box"
+            style="display: none;"
+          ></div>
+        </div>
+      </div>
+
+      <div id="output">Scanned String: <span id="result"></span></div>
+    </div>
+
+    <script>
+      //const beep = new Audio("assets/audio/success-sound.mp3");
+      const scanTypeSelect = document.getElementById("scan-type");
+      const startButton = document.getElementById("start-scan");
+      const stopButton = document.getElementById("stop-scan");
+      const cameraSelect = document.getElementById("camera-select");
+      const readerElement = document.getElementById("reader");
+      const barcodeScanner = document.getElementById("barcode-scanner");
+      const resultElement = document.getElementById("result");
+      const inputField = document.getElementById("input-string");
+      const statusIcon = document.getElementById("status-icon");
+
+      inputField.addEventListener("input", function () {
+        // Allow only numbers and hyphens
+        this.value = this.value.replace(/[^0-9-]/g, "");
+
+        // Ensure the length is 7 characters
+        if (this.value.length > 7) {
+          this.value = this.value.substring(0, 7);
+        }
+      });
+      let reader; // Html5Qrcode instance for QR scanning
+      let selectedCameraId = null; // ID of the selected camera
+
+      // Populate camera options
+
+      Html5Qrcode.getCameras()
+        .then((cameras) => {
+          if (cameras && cameras.length > 0) {
+            cameras.forEach((camera) => {
+              const option = document.createElement("option");
+              option.value = camera.id;
+              option.text = camera.label || `Camera ${camera.id}`;
+              cameraSelect.appendChild(option);
+            });
+
+            selectedCameraId = cameras[0].id; // Default to the first camera
+            cameraSelect.addEventListener("change", () => {
+              stopScanning();
+              selectedCameraId = cameraSelect.value;
+            });
+          } else {
+            console.log("No cameras found on this device.");
+          }
+        })
+        .catch((err) => console.error("Error fetching cameras:", err));
+
+      // Start scanning based on the selected scan type
+      async function startScanning() {
+        const scanType = scanTypeSelect.value;
+
+        if (scanType === "qrcode") {
+          startQrCodeScanning();
+        } else if (scanType === "barcode") {
+          startBarcodeScanning();
+        }
+      }
+
+      // Start QR code scanning
+      async function startQrCodeScanning() {
+        try {
+          reader = new Html5Qrcode("reader");
+          readerElement.style.display = "block";
+          barcodeScanner.style.display = "none";
+
+          const config = {
+            fps: 10,
+          };
+
+          await reader.start(
+            { deviceId: { exact: selectedCameraId } },
+            config,
+            onScanSuccess,
+            onScanError
+          );
+        } catch (error) {
+          // console.error("Error starting QR scanner:", error);
+        }
+      }
+
+      // Start Barcode scanning
+      function startBarcodeScanning() {
+        readerElement.style.display = "none";
+        barcodeScanner.style.display = "block";
+
+        Quagga.init(
+          {
+            inputStream: {
+              type: "LiveStream",
+              target: barcodeScanner,
+              constraints: {
+                deviceId: selectedCameraId,
+              },
+            },
+            decoder: {
+              readers: ["code_128_reader", "ean_reader", "upc_reader"],
+            },
+          },
+          (err) => {
+            if (err) {
+              //     console.error("Error initializing Quagga:", err);
+              return;
+            }
+            Quagga.start();
+          }
+        );
+
+        Quagga.onDetected((data) => {
+          const decodedText = data.codeResult.code;
+          onScanSuccess(decodedText);
+        });
+      }
+
+      // Stop scanning
+      async function stopScanning() {
+        try {
+          if (reader) {
+            await reader.stop();
+            readerElement.style.display = "none";
+          }
+          Quagga.stop();
+          barcodeScanner.style.display = "none";
+        } catch (error) {
+          //       console.error("Error stopping scanner:", error);
+        }
+      }
+
+      // Handle successful scan
+      function onScanSuccess(decodedText) {
+        // beep.play();
+        // Regular expression to match Batch No, excluding commas and any non-alphanumeric characters
+        const batchNoMatch = decodedText.match(/BATCH\.NO\s([\w-]+)/);
+
+        // Check if a match for Batch No is found
+        if (batchNoMatch) {
+          const batchNo = batchNoMatch[1]; // Extract the batch number (e.g., 24-1626)
+
+          // Compare with the input field value
+          if (batchNo === inputField.value) {
+            statusIcon.textContent = "✔ " + batchNo; // Show match status
+            statusIcon.className = "status-icon match"; // Update class for match
+            resultElement.textContent = batchNo; // Display the matched Batch No
+          } else {
+            statusIcon.textContent = "✘ No-Match"; // Show no-match status
+            statusIcon.className = "status-icon nomatch"; // Update class for no-match
+            resultElement.textContent = batchNo; // Display full scanned text
+          }
+        } else {
+          // If no Batch No is found
+          statusIcon.textContent = "✘ No-Match"; // Show no-match status
+          statusIcon.className = "status-icon nomatch"; // Update class for no-match
+          resultElement.textContent = decodedText; // Display full scanned text
+        }
+
+        // Stop scanning after processing the scanned result
+        stopScanning();
+      }
+
+      // Handle scanning errors or no result
+      function onScanError(errorMessage) {
+        //  console.warn("Scan error:", errorMessage);
+      }
+
+      // Event listeners for buttons
+      startButton.addEventListener("click", () => {
+        resultElement.textContent = "None";
+        statusIcon.textContent = "";
+        startScanning();
+      });
+
+      stopButton.addEventListener("click", () => stopScanning());
+    </script>
+  </body>
+</html>
